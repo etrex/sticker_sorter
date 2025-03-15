@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>圖片排序器</title>
+    <style>
+        #dropZone {
+            width: 100%;
+            min-height: 200px;
+            border: 3px dashed #ccc;
+            border-radius: 10px;
+            margin: 20px 0;
+            padding: 20px;
+            text-align: center;
+            transition: border 0.3s ease;
+        }
+
+        #dropZone.dragover {
+            border-color: #4CAF50;
+            background-color: rgba(76, 175, 80, 0.1);
+        }
+
+        #imageContainer {
+            display: grid;
+            grid-template-columns: repeat(4, 150px);
+            gap: 15px;
+            padding: 20px;
+            justify-content: center;
+            width: fit-content;
+            margin: 0 auto;
+        }
+
+        .image-wrapper {
+            position: relative;
+            width: 150px;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            overflow: hidden;
+            cursor: move;
+            transition: transform 0.2s ease;
+            background: white;
+        }
+
+        .image-container {
+            width: 150px;
+            height: 150px;
+            overflow: hidden;
+        }
+
+        .image-wrapper img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .filename {
+            padding: 5px;
+            text-align: center;
+            font-size: 12px;
+            word-break: break-all;
+            background: white;
+            border-top: 1px solid #eee;
+            max-height: 40px;
+            overflow-y: auto;
+        }
+
+        .image-wrapper:hover {
+            transform: scale(1.02);
+        }
+
+        .dragging {
+            opacity: 0.5;
+            border: 2px dashed #4CAF50;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+
+        .download-button {
+            display: block;
+            margin: 20px auto;
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s ease;
+        }
+
+        .download-button:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <h1>圖片排序器</h1>
+    <div id="dropZone">
+        將圖片拖曳至此處
+    </div>
+    <button id="downloadButton" class="download-button">下載排序結果</button>
+    <div id="imageContainer"></div>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const imageContainer = document.getElementById('imageContainer');
+        let draggingElement = null;
+
+        // 防止瀏覽器預設的拖放行為
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, preventDefaults, false);
+            document.body.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        // 拖曳效果
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, highlight, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, unhighlight, false);
+        });
+
+        function highlight(e) {
+            dropZone.classList.add('dragover');
+        }
+
+        function unhighlight(e) {
+            dropZone.classList.remove('dragover');
+        }
+
+        // 處理檔案拖放
+        dropZone.addEventListener('drop', handleDrop, false);
+
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+
+            handleFiles(files);
+        }
+
+        async function handleFiles(files) {
+            // 將 FileList 轉換為陣列並按檔名排序
+            const filesArray = [...files].sort((a, b) => a.name.localeCompare(b.name));
+            
+            // 清空現有的圖片
+            imageContainer.innerHTML = '';
+            
+            // 輸出所有檔案名稱到 console
+            console.log('上傳的圖片檔案：');
+            filesArray.forEach((file, index) => {
+                console.log(`${index + 1}. ${file.name}`);
+            });
+            
+            // 使用 Promise 來確保圖片按順序載入
+            for (const file of filesArray) {
+                if (file.type.startsWith('image/')) {
+                    try {
+                        const dataUrl = await readFileAsDataURL(file);
+                        const element = createImageElement(dataUrl, file.name);
+                        imageContainer.appendChild(element);
+                    } catch (error) {
+                        console.error(`Error loading image ${file.name}:`, error);
+                    }
+                }
+            }
+        }
+
+        // 將 FileReader 包裝成 Promise
+        function readFileAsDataURL(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = e => resolve(e.target.result);
+                reader.onerror = e => reject(e);
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function createImageElement(src, filename) {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'image-wrapper';
+            wrapper.draggable = true;
+            wrapper.dataset.filename = filename;
+
+            const imageContainer = document.createElement('div');
+            imageContainer.className = 'image-container';
+
+            const img = document.createElement('img');
+            img.src = src;
+            imageContainer.appendChild(img);
+            wrapper.appendChild(imageContainer);
+
+            const filenameDiv = document.createElement('div');
+            filenameDiv.className = 'filename';
+            filenameDiv.textContent = filename;
+            wrapper.appendChild(filenameDiv);
+
+            // 設置拖曳事件
+            wrapper.addEventListener('dragstart', handleDragStart);
+            wrapper.addEventListener('dragend', handleDragEnd);
+            wrapper.addEventListener('dragover', handleDragOver);
+            wrapper.addEventListener('drop', handleImageDrop);
+
+            return wrapper;
+        }
+
+        function handleDragStart(e) {
+            draggingElement = this;
+            this.classList.add('dragging');
+        }
+
+        function handleDragEnd(e) {
+            draggingElement = null;
+            this.classList.remove('dragging');
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            const wrapper = this;
+            
+            if (draggingElement !== wrapper) {
+                const draggingRect = draggingElement.getBoundingClientRect();
+                const wrapperRect = wrapper.getBoundingClientRect();
+                
+                if (draggingRect.y < wrapperRect.y) {
+                    wrapper.parentNode.insertBefore(draggingElement, wrapper.nextSibling);
+                } else {
+                    wrapper.parentNode.insertBefore(draggingElement, wrapper);
+                }
+            }
+        }
+
+        function handleImageDrop(e) {
+            e.preventDefault();
+            reorderImages();
+        }
+
+        function reorderImages() {
+            const imageContainer = document.getElementById('imageContainer');
+            const images = Array.from(imageContainer.getElementsByClassName('image-wrapper'));
+            const order = images.map(img => img.querySelector('.filename').textContent);
+            return order;
+        }
+
+        function downloadSortResult() {
+            const order = reorderImages();
+            const sortResult = {
+                timestamp: new Date().toISOString(),
+                files: order
+            };
+            
+            const jsonString = JSON.stringify(sortResult, null, 2);
+            const blob = new Blob([jsonString], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'orders.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        document.getElementById('downloadButton').addEventListener('click', downloadSortResult);
+    </script>
+</body>
+</html>
