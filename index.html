@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>圖片排序器</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
         #dropZone {
             width: 100%;
@@ -89,7 +90,7 @@
             text-align: center;
         }
 
-        .download-button {
+        .button {
             display: block;
             margin: 20px auto;
             padding: 10px 20px;
@@ -102,8 +103,20 @@
             transition: background-color 0.3s ease;
         }
 
-        .download-button:hover {
+        .button:hover {
             background-color: #45a049;
+        }
+
+        .button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        #status {
+            text-align: center;
+            color: #666;
+            margin: 10px 0;
+            min-height: 20px;
         }
     </style>
 </head>
@@ -112,13 +125,17 @@
     <div id="dropZone">
         將圖片拖曳至此處
     </div>
-    <button id="downloadButton" class="download-button">下載排序結果</button>
+    <div id="status"></div>
+    <button id="downloadButton" class="button" disabled>下載縮放後的圖片</button>
     <div id="imageContainer"></div>
 
     <script>
         const dropZone = document.getElementById('dropZone');
         const imageContainer = document.getElementById('imageContainer');
+        const downloadButton = document.getElementById('downloadButton');
+        const statusDiv = document.getElementById('status');
         let draggingElement = null;
+        let imageFiles = [];
 
         // 防止瀏覽器預設的拖放行為
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -154,33 +171,36 @@
         function handleDrop(e) {
             const dt = e.dataTransfer;
             const files = dt.files;
-
             handleFiles(files);
         }
 
         async function handleFiles(files) {
             // 將 FileList 轉換為陣列並按檔名排序
-            const filesArray = [...files].sort((a, b) => a.name.localeCompare(b.name));
+            imageFiles = [...files].filter(file => file.type.startsWith('image/')).sort((a, b) => a.name.localeCompare(b.name));
             
             // 清空現有的圖片
             imageContainer.innerHTML = '';
             
             // 輸出所有檔案名稱到 console
             console.log('上傳的圖片檔案：');
-            filesArray.forEach((file, index) => {
+            imageFiles.forEach((file, index) => {
                 console.log(`${index + 1}. ${file.name}`);
             });
+
+            if (imageFiles.length > 0) {
+                downloadButton.disabled = false;
+            } else {
+                downloadButton.disabled = true;
+            }
             
             // 使用 Promise 來確保圖片按順序載入
-            for (const file of filesArray) {
-                if (file.type.startsWith('image/')) {
-                    try {
-                        const dataUrl = await readFileAsDataURL(file);
-                        const element = createImageElement(dataUrl, file.name);
-                        imageContainer.appendChild(element);
-                    } catch (error) {
-                        console.error(`Error loading image ${file.name}:`, error);
-                    }
+            for (const file of imageFiles) {
+                try {
+                    const dataUrl = await readFileAsDataURL(file);
+                    const element = createImageElement(dataUrl, file.name);
+                    imageContainer.appendChild(element);
+                } catch (error) {
+                    console.error(`Error loading image ${file.name}:`, error);
                 }
             }
         }
@@ -199,26 +219,26 @@
             const wrapper = document.createElement('div');
             wrapper.className = 'image-wrapper';
             wrapper.draggable = true;
-            wrapper.dataset.filename = filename;
 
-            const imageContainer = document.createElement('div');
-            imageContainer.className = 'image-container';
+            const container = document.createElement('div');
+            container.className = 'image-container';
 
             const img = document.createElement('img');
             img.src = src;
-            imageContainer.appendChild(img);
-            wrapper.appendChild(imageContainer);
+            container.appendChild(img);
 
             const filenameDiv = document.createElement('div');
             filenameDiv.className = 'filename';
             filenameDiv.textContent = filename;
+
+            wrapper.appendChild(container);
             wrapper.appendChild(filenameDiv);
 
-            // 設置拖曳事件
-            wrapper.addEventListener('dragstart', handleDragStart);
-            wrapper.addEventListener('dragend', handleDragEnd);
-            wrapper.addEventListener('dragover', handleDragOver);
-            wrapper.addEventListener('drop', handleImageDrop);
+            // 拖曳事件處理
+            wrapper.addEventListener('dragstart', handleDragStart, false);
+            wrapper.addEventListener('dragend', handleDragEnd, false);
+            wrapper.addEventListener('dragover', handleDragOver, false);
+            wrapper.addEventListener('drop', handleImageDrop, false);
 
             return wrapper;
         }
@@ -235,13 +255,17 @@
 
         function handleDragOver(e) {
             e.preventDefault();
-            const wrapper = this;
+            const wrapper = e.currentTarget;
+            const bounding = wrapper.getBoundingClientRect();
+            const mouseY = e.clientY;
+            const mouseX = e.clientX;
             
             if (draggingElement !== wrapper) {
-                const draggingRect = draggingElement.getBoundingClientRect();
-                const wrapperRect = wrapper.getBoundingClientRect();
+                const elements = [...imageContainer.children];
+                const draggingIndex = elements.indexOf(draggingElement);
+                const targetIndex = elements.indexOf(wrapper);
                 
-                if (draggingRect.y < wrapperRect.y) {
+                if (draggingIndex < targetIndex) {
                     wrapper.parentNode.insertBefore(draggingElement, wrapper.nextSibling);
                 } else {
                     wrapper.parentNode.insertBefore(draggingElement, wrapper);
@@ -251,37 +275,96 @@
 
         function handleImageDrop(e) {
             e.preventDefault();
-            reorderImages();
         }
 
-        function reorderImages() {
-            const imageContainer = document.getElementById('imageContainer');
-            const images = Array.from(imageContainer.getElementsByClassName('image-wrapper'));
-            const order = images.map(img => img.querySelector('.filename').textContent);
-            return order;
+        // 圖片縮放函數
+        async function resizeImage(file, maxWidth, maxHeight) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => {
+                    // 計算縮放比例
+                    const scale = Math.min(maxWidth / img.width, maxHeight / img.height);
+                    const width = img.width * scale;
+                    const height = img.height * scale;
+
+                    // 創建 canvas 並繪製縮放後的圖片
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+
+                    // 轉換為 PNG 格式
+                    canvas.toBlob(resolve, 'image/png');
+                };
+                img.onerror = reject;
+                img.src = URL.createObjectURL(file);
+            });
         }
 
-        function downloadSortResult() {
-            const order = reorderImages();
-            const sortResult = {
-                timestamp: new Date().toISOString(),
-                files: order
-            };
-            
-            const jsonString = JSON.stringify(sortResult, null, 2);
-            const blob = new Blob([jsonString], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'orders.json';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+        // 下載處理後的圖片
+        async function downloadProcessedImages() {
+            try {
+                statusDiv.textContent = "正在處理圖片...";
+                downloadButton.disabled = true;
+
+                const zip = new JSZip();
+                const imageWrappers = [...imageContainer.children];
+                
+                // 檢查是否有 main.PNG 和 tab.PNG
+                const mainFile = imageFiles.find(f => f.name.toLowerCase() === 'main.png');
+                const tabFile = imageFiles.find(f => f.name.toLowerCase() === 'tab.png');
+
+                // 直接複製 main.PNG 和 tab.PNG
+                if (mainFile) zip.file('main.PNG', mainFile);
+                if (tabFile) zip.file('tab.PNG', tabFile);
+
+                // 創建 orders.json
+                const orders = {
+                    files: imageWrappers
+                        .map(wrapper => wrapper.querySelector('.filename').textContent)
+                        .filter(name => name.toLowerCase() !== 'main.png' && name.toLowerCase() !== 'tab.png')
+                };
+                zip.file('orders.json', JSON.stringify(orders, null, 2));
+
+                // 處理其他圖片
+                let index = 1;
+                for (const wrapper of imageWrappers) {
+                    const filename = wrapper.querySelector('.filename').textContent;
+                    const file = imageFiles.find(f => f.name === filename);
+                    
+                    if (filename.toLowerCase() !== 'main.png' && filename.toLowerCase() !== 'tab.png') {
+                        // 縮放圖片
+                        const resizedBlob = await resizeImage(file, 370, 320);
+                        zip.file(`${String(index).padStart(2, '0')}.PNG`, resizedBlob);
+                        index++;
+                    }
+
+                    statusDiv.textContent = `正在處理圖片 ${index - 1}/${imageWrappers.length}...`;
+                }
+
+                // 生成並下載 ZIP
+                statusDiv.textContent = "正在產生 ZIP 檔案...";
+                const content = await zip.generateAsync({type: "blob"});
+                const url = URL.createObjectURL(content);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'sticker_images.zip';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                statusDiv.textContent = "下載完成！";
+                downloadButton.disabled = false;
+            } catch (error) {
+                console.error('Error processing images:', error);
+                statusDiv.textContent = "處理圖片時發生錯誤！";
+                downloadButton.disabled = false;
+            }
         }
 
-        document.getElementById('downloadButton').addEventListener('click', downloadSortResult);
+        downloadButton.addEventListener('click', downloadProcessedImages);
     </script>
 </body>
 </html>
